@@ -1,0 +1,83 @@
+# Junior DevOps Engineer - Home Task (webz.io)
+#
+# webz-001..003 : Ubuntu 18.04, Pacemaker + Corosync cluster, Floating IP + Apache2
+# webz-004      : Ubuntu 18.04, Jenkins (curl job every 5 minutes)
+#
+# Floating IP (VIP): 172.28.0.100 - deliberately outside ip_range, so Docker
+# never hands it out to a container.
+
+name: webz
+
+x-cluster-node: &cluster-node
+  build: ./cluster
+  image: webz/cluster-node:18.04
+  # NET_ADMIN/NET_RAW: IPaddr2 adds the VIP to eth0 and sends gratuitous ARP.
+  # SYS_NICE/IPC_LOCK: corosync runs with realtime priority and locked memory.
+  cap_add: [NET_ADMIN, NET_RAW, SYS_NICE, IPC_LOCK]
+  # corosync/pacemaker (libqb) keep IPC ring buffers in /dev/shm; Docker's 64 MB fills up
+  shm_size: 256m
+  # Static name resolution for corosync (works even while a peer container is down,
+  # unlike Docker's embedded DNS which drops stopped containers)
+  extra_hosts:
+    - "webz-001:172.28.0.11"
+    - "webz-002:172.28.0.12"
+    - "webz-003:172.28.0.13"
+  # Give pacemaker time to stop resources gracefully on `docker stop`.
+  stop_grace_period: 60s
+  restart: "no"
+
+services:
+  webz-001:
+    <<: *cluster-node
+    container_name: webz-001
+    hostname: webz-001
+    networks:
+      webz-net:
+        ipv4_address: 172.28.0.11
+
+  webz-002:
+    <<: *cluster-node
+    container_name: webz-002
+    hostname: webz-002
+    networks:
+      webz-net:
+        ipv4_address: 172.28.0.12
+
+  webz-003:
+    <<: *cluster-node
+    container_name: webz-003
+    hostname: webz-003
+    networks:
+      webz-net:
+        ipv4_address: 172.28.0.13
+
+  webz-004:
+    build: ./jenkins
+    image: webz/jenkins:18.04
+    container_name: webz-004
+    hostname: webz-004
+    environment:
+      JENKINS_ADMIN_USER: ${JENKINS_ADMIN_USER:-admin}
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-admin}
+      TZ: ${TZ:-Asia/Jerusalem}
+    ports:
+      - "${JENKINS_HOST_PORT:-8090}:8080"
+    volumes:
+      - jenkins_home:/var/lib/jenkins
+      # Log file is accessible from outside the container: ./logs/curl.log
+      - ./logs:/var/log/webz
+    networks:
+      webz-net:
+        ipv4_address: 172.28.0.14
+
+networks:
+  webz-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          ip_range: 172.28.0.0/26
+          gateway: 172.28.0.1
+
+volumes:
+  jenkins_home:
