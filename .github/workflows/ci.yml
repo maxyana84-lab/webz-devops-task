@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
+  # ---------------------------------------------------------------------------
   lint:
     name: Lint (shellcheck, hadolint, compose)
     runs-on: ubuntu-latest
@@ -13,9 +14,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: shellcheck
-        run: |
-          shellcheck --version
-          shellcheck scripts/*.sh cluster/*.sh jenkins/*.sh jenkins/jenkins.init
+        run: shellcheck scripts/*.sh cluster/*.sh jenkins/*.sh jenkins/jenkins.init
 
       - name: hadolint
         run: |
@@ -28,45 +27,171 @@ jobs:
       - name: docker compose config
         run: docker compose config -q
 
-  e2e:
-    name: Cluster + Jenkins + failover tests
-    runs-on: ubuntu-latest
+      - name: actionlint (this workflow)
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
+
+  # ---------------------------------------------------------------------------
+  # Tests 1-5 from the task, one job per failure type
+  failover:
+    name: "Failover: ${{ matrix.name }}"
     needs: lint
+    runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: graceful shutdown (docker stop)
+            mode: stop
+            rounds: 1
+          - name: hard failure (docker kill)
+            mode: kill
+            rounds: 1
+          - name: cascade 001 -> 002 -> 003
+            mode: kill
+            rounds: 2
+    env:
+      MODE: ${{ matrix.mode }}
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build and start (scripts/up.sh)
-        run: ./scripts/up.sh
-
-      - name: Wait for Jenkins
+      - name: Setup - build 4 containers, configure cluster (scripts/up.sh)
         run: |
-          for i in $(seq 1 60); do
+          ./scripts/up.sh
+          {
+            echo "## Failover: ${{ matrix.name }}"
+            echo "| Test | Result |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup - wait for Jenkins
+        run: |
+          for _ in $(seq 1 60); do
             docker exec webz-004 curl -s -o /dev/null --max-time 2 http://localhost:8080/login && exit 0
             sleep 5
           done
           docker logs webz-004 | tail -50; exit 1
 
-      - name: Homepage on the floating IP
+      - name: Check - cluster, constraints, quorum, homepage on the floating IP
         run: |
-          docker exec webz-004 curl -s http://172.28.0.100/ | tee /tmp/page.html
-          grep -q "Junior DevOps Engineer - Home Task" /tmp/page.html
+          source scripts/lib.sh
+          docker exec webz-001 pcs status
+          docker exec webz-001 pcs constraint
+          docker exec webz-001 corosync-quorumtool -s
+          docker exec webz-004 curl -s -i "http://$VIP/" | tee /tmp/page.txt
+          grep -q "Junior DevOps Engineer - Home Task" /tmp/page.txt
+          summary "| Homepage on $VIP shows the required text | ✅ |"
 
-      - name: Cascade failover 001 -> 002 -> 003 with Jenkins runs
+      - name: Check - Jenkins baseline run before the failure
         run: |
-          ./scripts/failover-test.sh --cascade | tee /tmp/cascade.txt
-          grep -q "New active node: webz-002" /tmp/cascade.txt
-          grep -q "New active node: webz-003" /tmp/cascade.txt
-          grep -q "node=webz-001 | http=200" logs/curl.log
-          grep -q "node=webz-002 | http=200" logs/curl.log
-          grep -q "node=webz-003 | http=200" logs/curl.log
+          source scripts/lib.sh
+          ./scripts/jenkins-build.sh | tee /tmp/build.txt
+          grep -q "node=webz-001 | http=200" /tmp/build.txt
+          summary "| Jenkins baseline run answered by webz-001 | ✅ |"
 
-      - name: Failback to webz-001
+      # ----- round 1: webz-001 -> webz-002 -----------------------------------
+      - name: "Test 1 - find the active node and shut it down (docker ${{ matrix.mode }})"
         run: |
-          docker start webz-001 webz-002
-          for i in $(seq 1 60); do
-            docker exec webz-004 curl -s -o /dev/null -D - --max-time 2 http://172.28.0.100/ \
-              | grep -q "X-Served-By: webz-001" && { ./scripts/status.sh; exit 0; }
+          source scripts/lib.sh
+          ACTIVE="$(active_node)"
+          echo "Active node (pacemaker): $ACTIVE   X-Served-By: $(served_by)"
+          test "$ACTIVE" = "webz-001"
+          docker "$MODE" "$ACTIVE"
+          echo "OLD=$ACTIVE" >> "$GITHUB_ENV"
+          echo "T0=$(date +%s)" >> "$GITHUB_ENV"
+          summary "| Test 1 - active node is webz-001, shut down with docker $MODE | ✅ |"
+
+      - name: Test 2 - floating IP moved to another machine
+        run: |
+          source scripts/lib.sh
+          NEW="$(wait_for_new_node "$OLD" 90)"
+          SECS=$(( $(date +%s) - T0 ))
+          echo "New active node: $NEW (after ${SECS}s)"
+          test "$NEW" = "webz-002"
+          docker exec "$NEW" ip -4 addr show eth0 | tee /dev/stderr | grep -q "$VIP/"
+          docker exec "$NEW" pcs status | sed -n '/Full list of resources/,$p'
+          echo "NEW=$NEW" >> "$GITHUB_ENV"
+          echo "SECS=$SECS" >> "$GITHUB_ENV"
+          summary "| Test 2 - VIP moved $OLD -> $NEW in ${SECS}s | ✅ |"
+
+      - name: Test 3 - transition was automatic (no manual command)
+        run: |
+          source scripts/lib.sh
+          N="$(any_cluster_node)"
+          # 'pcs resource move' would have created a cli-prefer/cli-ban constraint
+          if docker exec "$N" pcs constraint --full | grep -q "cli-"; then
+            echo "manual move constraint found"; exit 1
+          fi
+          echo "== configuration that makes it automatic"
+          docker exec "$N" pcs constraint
+          docker exec "$N" pcs resource defaults
+          docker exec "$N" pcs property show stonith-enabled no-quorum-policy || true
+          docker exec "$N" grep -A12 '^quorum' /etc/corosync/corosync.conf
+          summary "| Test 3 - automatic failover, no manual constraint created | ✅ |"
+
+      - name: Test 4 - Jenkins job receives the response from the new active machine
+        run: |
+          source scripts/lib.sh
+          ./scripts/jenkins-build.sh | tee /tmp/build.txt
+          grep -q "node=$NEW | http=200" /tmp/build.txt
+          summary "| Test 4 - Jenkins build SUCCESS, answered by $NEW | ✅ |"
+
+      - name: Test 5 - new log records contain the name of the new active machine
+        run: |
+          source scripts/lib.sh
+          cat logs/curl.log
+          tail -n 1 logs/curl.log | grep -q "node=$NEW"
+          grep -q "node=$OLD" logs/curl.log
+          summary "| Test 5 - logs/curl.log: records switch from $OLD to $NEW | ✅ |"
+
+      # ----- round 2 (cascade only): webz-002 -> webz-003 --------------------
+      - name: "Cascade - Test 1 - shut down the new active node"
+        if: matrix.rounds == 2
+        run: |
+          source scripts/lib.sh
+          sleep 15   # last_man_standing window (10 s) must pass first
+          ACTIVE="$(active_node)"
+          echo "Active node: $ACTIVE"
+          test "$ACTIVE" = "webz-002"
+          docker "$MODE" "$ACTIVE"
+          echo "OLD=$ACTIVE" >> "$GITHUB_ENV"
+          echo "T0=$(date +%s)" >> "$GITHUB_ENV"
+          summary "| Cascade Test 1 - active node webz-002 shut down | ✅ |"
+
+      - name: "Cascade - Test 2 - floating IP moved to the last node"
+        if: matrix.rounds == 2
+        run: |
+          source scripts/lib.sh
+          NEW="$(wait_for_new_node "$OLD" 90)"
+          SECS=$(( $(date +%s) - T0 ))
+          echo "New active node: $NEW (after ${SECS}s)"
+          test "$NEW" = "webz-003"
+          docker exec "$NEW" ip -4 addr show eth0 | grep -q "$VIP/"
+          docker exec "$NEW" corosync-quorumtool -s
+          echo "NEW=$NEW" >> "$GITHUB_ENV"
+          summary "| Cascade Test 2 - VIP moved $OLD -> $NEW in ${SECS}s (1 node left, quorum kept) | ✅ |"
+
+      - name: "Cascade - Test 4/5 - Jenkins and log show the last node"
+        if: matrix.rounds == 2
+        run: |
+          source scripts/lib.sh
+          ./scripts/jenkins-build.sh | tee /tmp/build.txt
+          grep -q "node=$NEW | http=200" /tmp/build.txt
+          tail -n 1 logs/curl.log | grep -q "node=$NEW"
+          summary "| Cascade Test 4/5 - Jenkins SUCCESS, log shows $NEW | ✅ |"
+
+      # ----- recovery ---------------------------------------------------------
+      - name: Recovery - nodes return, floating IP fails back to webz-001
+        run: |
+          source scripts/lib.sh
+          docker start webz-001 webz-002 webz-003
+          for _ in $(seq 1 60); do
+            if [ "$(served_by)" = "webz-001" ]; then
+              ./scripts/status.sh
+              docker exec webz-001 corosync-quorumtool -s
+              summary "| Recovery - all nodes back, VIP failed back to webz-001 | ✅ |"
+              exit 0
+            fi
             sleep 2
           done
           exit 1
@@ -76,11 +201,65 @@ jobs:
         run: |
           mkdir -p artifacts
           cp logs/curl.log artifacts/ || true
-          for n in webz-001 webz-002 webz-003 webz-004; do docker logs "$n" > "artifacts/$n.log" 2>&1 || true; done
-          docker exec webz-002 pcs status > artifacts/pcs-status.txt 2>&1 || true
+          for n in webz-001 webz-002 webz-003 webz-004; do
+            docker logs "$n" > "artifacts/$n.log" 2>&1 || true
+          done
+          docker exec webz-001 pcs status > artifacts/pcs-status.txt 2>&1 || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat logs/curl.log >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v5
         if: always()
         with:
-          name: e2e-logs
+          name: logs-${{ matrix.mode }}-${{ matrix.rounds }}
           path: artifacts/
+
+  # ---------------------------------------------------------------------------
+  jenkins-timer:
+    name: "Jenkins: job runs every 5 minutes by itself"
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup - build and start (scripts/up.sh)
+        run: ./scripts/up.sh
+
+      - name: Check - job exists with schedule H/5 * * * *
+        run: |
+          for _ in $(seq 1 60); do
+            docker exec webz-004 curl -s -o /dev/null --max-time 2 http://localhost:8080/login && break
+            sleep 5
+          done
+          docker exec webz-004 bash -c 'curl -s -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+            http://localhost:8080/job/webz-floating-ip-check/config.xml' | tee /tmp/config.xml
+          grep -q "<spec>H/5 \* \* \* \*</spec>" /tmp/config.xml
+
+      - name: Check - a build "Started by timer" appears (max 7 min)
+        run: |
+          for _ in $(seq 1 84); do
+            CAUSES=$(docker exec webz-004 bash -c 'curl -s -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+              "http://localhost:8080/job/webz-floating-ip-check/api/json?tree=builds\[number,result,actions\[causes\[shortDescription\]\]\]"')
+            if echo "$CAUSES" | grep -q "Started by timer"; then
+              echo "$CAUSES"
+              {
+                echo "## Jenkins timer"
+                echo "| Check | Result |"
+                echo "|---|---|"
+                echo "| Job scheduled H/5 * * * * and a timer-triggered build ran | ✅ |"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
+
+      - name: Check - log file on the host was appended, not overwritten
+        run: |
+          sleep 15
+          cat logs/curl.log
+          grep -q "node=webz-001 | http=200" logs/curl.log
+          ls -l logs/curl.log
+          echo "| logs/curl.log written on the host by the timer run | ✅ |" >> "$GITHUB_STEP_SUMMARY"
