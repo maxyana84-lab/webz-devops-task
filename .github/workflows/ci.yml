@@ -90,7 +90,8 @@ jobs:
           source scripts/lib.sh
           docker exec webz-001 pcs status
           docker exec webz-001 pcs constraint
-          docker exec webz-001 corosync-quorumtool -s
+          docker exec webz-001 corosync-quorumtool -s > /tmp/quorum.txt || true
+          cat /tmp/quorum.txt; grep -q "Quorate: *Yes" /tmp/quorum.txt
           docker exec webz-004 curl -s -i "http://$VIP/" | tee /tmp/page.txt
           grep -q "Junior DevOps Engineer - Home Task" /tmp/page.txt
           summary "| Homepage on $VIP shows the required text | ✅ |"
@@ -121,7 +122,8 @@ jobs:
           SECS=$(( $(date +%s) - T0 ))
           echo "New active node: $NEW (after ${SECS}s)"
           test "$NEW" = "webz-002"
-          docker exec "$NEW" ip -4 addr show eth0 | tee /dev/stderr | grep -q "$VIP/"
+          docker exec "$NEW" ip -4 addr show eth0 > /tmp/ip.txt
+          cat /tmp/ip.txt; grep -q "$VIP/" /tmp/ip.txt
           docker exec "$NEW" pcs status | sed -n '/Full list of resources/,$p'
           echo "NEW=$NEW" >> "$GITHUB_ENV"
           echo "SECS=$SECS" >> "$GITHUB_ENV"
@@ -132,7 +134,8 @@ jobs:
           source scripts/lib.sh
           N="$(any_cluster_node)"
           # 'pcs resource move' would have created a cli-prefer/cli-ban constraint
-          if docker exec "$N" pcs constraint --full | grep -q "cli-"; then
+          docker exec "$N" pcs constraint --full > /tmp/constraints.txt
+          if grep -q "cli-" /tmp/constraints.txt; then
             echo "manual move constraint found"; exit 1
           fi
           echo "== configuration that makes it automatic"
@@ -153,7 +156,7 @@ jobs:
         run: |
           source scripts/lib.sh
           cat logs/curl.log
-          tail -n 1 logs/curl.log | grep -q "node=$NEW"
+          [[ "$(tail -n 1 logs/curl.log)" == *"node=$NEW |"* ]]
           grep -q "node=$OLD" logs/curl.log
           summary "| Test 5 - logs/curl.log: records switch from $OLD to $NEW | ✅ |"
 
@@ -179,8 +182,10 @@ jobs:
           SECS=$(( $(date +%s) - T0 ))
           echo "New active node: $NEW (after ${SECS}s)"
           test "$NEW" = "webz-003"
-          docker exec "$NEW" ip -4 addr show eth0 | grep -q "$VIP/"
-          docker exec "$NEW" corosync-quorumtool -s
+          docker exec "$NEW" ip -4 addr show eth0 > /tmp/ip.txt
+          cat /tmp/ip.txt; grep -q "$VIP/" /tmp/ip.txt
+          docker exec "$NEW" corosync-quorumtool -s > /tmp/quorum.txt || true
+          cat /tmp/quorum.txt; grep -q "Quorate: *Yes" /tmp/quorum.txt
           echo "NEW=$NEW" >> "$GITHUB_ENV"
           summary "| Cascade Test 2 - VIP moved $OLD -> $NEW in ${SECS}s (1 node left, quorum kept) | ✅ |"
 
@@ -190,7 +195,7 @@ jobs:
           source scripts/lib.sh
           ./scripts/jenkins-build.sh | tee /tmp/build.txt
           grep -q "node=$NEW | http=200" /tmp/build.txt
-          tail -n 1 logs/curl.log | grep -q "node=$NEW"
+          [[ "$(tail -n 1 logs/curl.log)" == *"node=$NEW |"* ]]
           summary "| Cascade Test 4/5 - Jenkins SUCCESS, log shows $NEW | ✅ |"
 
       # ----- recovery ---------------------------------------------------------
@@ -201,7 +206,8 @@ jobs:
           for _ in $(seq 1 60); do
             if [ "$(served_by)" = "webz-001" ]; then
               ./scripts/status.sh
-              docker exec webz-001 corosync-quorumtool -s
+              docker exec webz-001 corosync-quorumtool -s > /tmp/quorum.txt || true
+              cat /tmp/quorum.txt; grep -q "Quorate: *Yes" /tmp/quorum.txt
               summary "| Recovery - all nodes back, VIP failed back to webz-001 | ✅ |"
               exit 0
             fi
