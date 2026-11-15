@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint (shellcheck, hadolint, compose)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          shellcheck scripts/*.sh cluster/*.sh jenkins/*.sh jenkins/jenkins.init
+
+      - name: hadolint
+        run: |
+          for f in cluster/Dockerfile jenkins/Dockerfile; do
+            echo "== $f"
+            docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml" \
+              hadolint/hadolint:v2.12.0 < "$f"
+          done
+
+      - name: docker compose config
+        run: docker compose config -q
+
+  e2e:
+    name: Cluster + Jenkins + failover tests
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start (scripts/up.sh)
+        run: ./scripts/up.sh
+
+      - name: Wait for Jenkins
+        run: |
+          for i in $(seq 1 60); do
+            docker exec webz-004 curl -s -o /dev/null --max-time 2 http://localhost:8080/login && exit 0
+            sleep 5
+          done
+          docker logs webz-004 | tail -50; exit 1
+
+      - name: Homepage on the floating IP
+        run: |
+          docker exec webz-004 curl -s http://172.28.0.100/ | tee /tmp/page.html
+          grep -q "Junior DevOps Engineer - Home Task" /tmp/page.html
+
+      - name: Cascade failover 001 -> 002 -> 003 with Jenkins runs
+        run: |
+          ./scripts/failover-test.sh --cascade | tee /tmp/cascade.txt
+          grep -q "New active node: webz-002" /tmp/cascade.txt
+          grep -q "New active node: webz-003" /tmp/cascade.txt
+          grep -q "node=webz-001 | http=200" logs/curl.log
+          grep -q "node=webz-002 | http=200" logs/curl.log
+          grep -q "node=webz-003 | http=200" logs/curl.log
+
+      - name: Failback to webz-001
+        run: |
+          docker start webz-001 webz-002
+          for i in $(seq 1 60); do
+            docker exec webz-004 curl -s -o /dev/null -D - --max-time 2 http://172.28.0.100/ \
+              | grep -q "X-Served-By: webz-001" && { ./scripts/status.sh; exit 0; }
+            sleep 2
+          done
+          exit 1
+
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p artifacts
+          cp logs/curl.log artifacts/ || true
+          for n in webz-001 webz-002 webz-003 webz-004; do docker logs "$n" > "artifacts/$n.log" 2>&1 || true; done
+          docker exec webz-002 pcs status > artifacts/pcs-status.txt 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-logs
+          path: artifacts/

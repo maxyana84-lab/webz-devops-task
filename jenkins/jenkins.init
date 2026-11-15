@@ -9,6 +9,7 @@
 ### END INIT INFO
 # SysV init script: `service jenkins start|stop|restart|status`
 
+# shellcheck source=/dev/null  # file exists only inside the image
 . /etc/default/jenkins
 TZ_OPT="-Duser.timezone=${TZ:-UTC}"
 

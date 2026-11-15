@@ -1,0 +1,3 @@
+ignored:
+  # Ubuntu 18.04 packages are frozen (EOL); pinning every apt version adds noise
+  - DL3008

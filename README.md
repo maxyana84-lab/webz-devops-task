@@ -1,5 +1,12 @@
 # Junior DevOps Engineer – Home Task (webz.io)
 
+[![CI](https://github.com/maxyana84-lab/webz-devops-task/actions/workflows/ci.yml/badge.svg)](https://github.com/maxyana84-lab/webz-devops-task/actions/workflows/ci.yml)
+
+Every push is checked by GitHub Actions: shellcheck + hadolint, then the whole
+stack is built on the runner and the cascade failover test
+(001 → 002 → 003, Jenkins log check, failback) runs end-to-end.
+Raw outputs of the local test runs are in [`test-results/`](test-results/).
+
 Four Ubuntu 18.04 containers:
 
 | Container | IP | Role |
@@ -46,6 +53,9 @@ scripts/
   up.sh                     build, start, configure cluster
   status.sh                 which node is active
   failover-test.sh          tests 1-5
+  run-all-tests.sh          all scenarios from scratch -> test-results/
+test-results/               saved outputs of run-all-tests.sh
+.github/workflows/ci.yml    lint + end-to-end failover test on every push
 logs/curl.log               Jenkins job output, visible on the host
 ```
 
@@ -194,8 +204,21 @@ Notes from testing on corosync 2.4.3:
 
 ## Tests
 
-All tests are automated in `scripts/failover-test.sh`. Output below is from a
-fresh `docker compose down -v && ./scripts/up.sh` run (trimmed).
+All tests are automated in `scripts/failover-test.sh`; `scripts/run-all-tests.sh`
+runs every scenario from scratch and saves the full outputs:
+
+| File | Content |
+|---|---|
+| [00-setup.txt](test-results/00-setup.txt) | `up.sh`: resources, constraints, first curl |
+| [01-cluster-status.txt](test-results/01-cluster-status.txt) | `pcs status`, scores, quorum, VIP on eth0, homepage, Jenkins service |
+| [02-failover-docker-stop.txt](test-results/02-failover-docker-stop.txt) | tests 1-5, graceful shutdown |
+| [03-failover-docker-kill.txt](test-results/03-failover-docker-kill.txt) | tests 1-5, hard failure |
+| [04-failover-cascade.txt](test-results/04-failover-cascade.txt) | 001 → 002 → 003 |
+| [05-recovery-failback.txt](test-results/05-recovery-failback.txt) | nodes back, VIP returns to webz-001 |
+| [06-jenkins-builds.txt](test-results/06-jenkins-builds.txt) | build history incl. timer-triggered runs |
+| [curl.log](test-results/curl.log) | the complete log file written by the Jenkins job |
+
+Output below is trimmed from these runs.
 
 ### Test 1 – find the active node and shut it down
 
@@ -333,6 +356,7 @@ Flags:            Quorate WaitForAll LastManStanding AutoTieBreaker
 | `No space left on device` in `/dev/shm` (libqb) | `shm_size: 256m` |
 | Host ports 8080/8081 already used | Jenkins published on `8090`, configurable via `JENKINS_HOST_PORT` |
 | Page `<title>` leaked into the log line | job strips `<head>` before removing tags |
+| WSL VM (3 GB RAM) hung under load | Jenkins heap limited: `-Xms256m -Xmx512m` |
 
 ---
 

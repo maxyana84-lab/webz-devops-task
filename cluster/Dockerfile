@@ -18,6 +18,8 @@ COPY corosync.conf /etc/corosync/corosync.conf
 COPY apache/ports.conf          /etc/apache2/ports.conf
 COPY apache/webz-vip.conf       /etc/apache2/sites-available/webz-vip.conf
 COPY apache/index.html          /var/www/webz/index.html
+# $(hostname) must stay literal: it is expanded when apache2 sources envvars
+# hadolint ignore=SC2016
 RUN a2enmod headers status \
  && a2dissite 000-default \
  && a2ensite webz-vip \

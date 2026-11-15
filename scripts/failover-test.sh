@@ -8,8 +8,8 @@ cd "$(dirname "$0")/.."
 
 MODE=stop; ROUNDS=1
 case "${1:-}" in
-    --kill)    MODE=kill ;;
-    --cascade) MODE=kill; ROUNDS=2 ;;
+    --kill)    MODE="kill" ;;
+    --cascade) MODE="kill"; ROUNDS=2 ;;
 esac
 
 active_node() {

@@ -1,5 +1,7 @@
 FROM ubuntu:18.04
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 ENV DEBIAN_FRONTEND=noninteractive \
     JENKINS_HOME=/var/lib/jenkins
 

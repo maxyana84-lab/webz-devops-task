@@ -4,6 +4,7 @@ set -e
 
 mkdir -p /var/log/corosync /var/log/pacemaker /var/run/apache2 /var/lock/apache2
 
+# shellcheck disable=SC2329  # invoked via trap
 shutdown() {
     echo "[$(hostname)] SIGTERM received - stopping pacemaker (resources move away), then corosync"
     pkill -TERM -x pacemakerd 2>/dev/null || true
