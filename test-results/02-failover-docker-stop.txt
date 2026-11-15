@@ -1,0 +1,45 @@
+== Before the failure: Jenkins run against the current active node
+Jenkins build #10 queued: HTTP 201
+--- console of build #10 ---
+Started by user admin
+--- last records in /var/log/webz/curl.log ---
+2026-11-15 20:40:25 IST | node=webz-001 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+2026-11-15 20:40:55 IST | node=webz-002 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+2026-11-15 20:41:40 IST | node=webz-003 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+2026-11-15 20:45:00 IST | node=webz-001 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+2026-11-15 20:49:04 IST | node=webz-001 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+Finished: SUCCESS
+
+== Test 1: find the active node (round 1)
+Active node: webz-001   (X-Served-By: webz-001)
+== Test 1: shut it down -> docker stop webz-001
+== Test 2/3: waiting for the automatic failover of the floating IP
+New active node: webz-002 (took ~7s, no manual command)
+Full list of resources:
+
+ Resource Group: WebGroup
+     FloatingIP	(ocf::heartbeat:IPaddr2):	Started webz-002
+     WebServer	(ocf::heartbeat:apache):	Started webz-002
+
+Responding node (via webz-004):
+X-Served-By: webz-002
+== Test 4: Jenkins job receives the answer from the new active node
+Jenkins build #11 queued: HTTP 201
+--- console of build #11 ---
+Started by user admin
+--- last records in /var/log/webz/curl.log ---
+2026-11-15 20:40:55 IST | node=webz-002 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+2026-11-15 20:41:40 IST | node=webz-003 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+2026-11-15 20:45:00 IST | node=webz-001 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+2026-11-15 20:49:04 IST | node=webz-001 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+2026-11-15 20:49:28 IST | node=webz-002 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+Finished: SUCCESS
+
+== Test 5: newest records in logs/curl.log
+2026-11-15 20:41:40 IST | node=webz-003 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+2026-11-15 20:45:00 IST | node=webz-001 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+2026-11-15 20:49:04 IST | node=webz-001 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+2026-11-15 20:49:28 IST | node=webz-002 | http=200 | curl_rc=0 | Junior DevOps Engineer - Home Task
+
+Bring nodes back with: docker start webz-001 webz-002 webz-003
+(resource-stickiness=0 -> the floating IP fails back to webz-001)

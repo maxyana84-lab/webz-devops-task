@@ -10,7 +10,7 @@ jobs:
     name: Lint (shellcheck, hadolint, compose)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: shellcheck
         run: |
@@ -34,7 +34,7 @@ jobs:
     needs: lint
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build and start (scripts/up.sh)
         run: ./scripts/up.sh
@@ -79,7 +79,7 @@ jobs:
           for n in webz-001 webz-002 webz-003 webz-004; do docker logs "$n" > "artifacts/$n.log" 2>&1 || true; done
           docker exec webz-002 pcs status > artifacts/pcs-status.txt 2>&1 || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: e2e-logs

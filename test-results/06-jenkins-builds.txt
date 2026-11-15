@@ -1,0 +1,12 @@
+Jenkins builds of webz-floating-ip-check (cause / result):
+shortDescription:Started by user admin number:11 result:SUCCESS
+shortDescription:Started by user admin number:10 result:SUCCESS
+shortDescription:Started by timer number:9 result:SUCCESS
+shortDescription:Started by user admin number:8 result:SUCCESS
+shortDescription:Started by user admin number:7 result:SUCCESS
+shortDescription:Started by user admin number:6 result:SUCCESS
+shortDescription:Started by timer number:5 result:SUCCESS
+shortDescription:Started by user admin number:4 result:SUCCESS
+shortDescription:Started by user admin number:3 result:SUCCESS
+shortDescription:Started by user admin number:2 result:SUCCESS
+shortDescription:Started by user admin number:1 result:SUCCESS

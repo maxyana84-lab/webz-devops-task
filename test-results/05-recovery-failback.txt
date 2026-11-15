@@ -1,0 +1,14 @@
+$ docker start webz-001 webz-002
+Full list of resources:
+
+ Resource Group: WebGroup
+     FloatingIP	(ocf::heartbeat:IPaddr2):	Started webz-001
+     WebServer	(ocf::heartbeat:apache):	Started webz-001
+
+Responding node (via webz-004):
+X-Served-By: webz-001
+
+Expected votes:   3
+Total votes:      3
+Quorum:           2  
+Flags:            Quorate WaitForAll LastManStanding AutoTieBreaker 

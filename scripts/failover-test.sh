@@ -34,11 +34,16 @@ jenkins_build() {
         AUTH="$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD"; JAR=$(mktemp)
         CRUMB=$(curl -s -c "$JAR" -u "$AUTH" "$J/crumbIssuer/api/json" \
                 | sed -E "s/.*\"crumb\":\"([^\"]+)\".*\"crumbRequestField\":\"([^\"]+)\".*/\2:\1/")
+        N=$(curl -s -u "$AUTH" "$J/job/$JOB/api/json?tree=nextBuildNumber" | grep -oE "[0-9]+")
         curl -s -b "$JAR" -u "$AUTH" -H "$CRUMB" -X POST "$J/job/$JOB/build" -o /dev/null \
-             -w "Jenkins build queued: HTTP %{http_code}\n"
-        sleep 12
-        echo "--- console of the last build ---"
-        curl -s -u "$AUTH" "$J/job/$JOB/lastBuild/consoleText" | grep -vE "^\[|^Running|^Building"'
+             -w "Jenkins build #$N queued: HTTP %{http_code}\n"
+        # wait until this exact build has finished (max 90 s)
+        for _ in $(seq 1 45); do
+            curl -s -u "$AUTH" "$J/job/$JOB/$N/api/json?tree=building" | grep -q "\"building\":false" && break
+            sleep 2
+        done
+        echo "--- console of build #$N ---"
+        curl -s -u "$AUTH" "$J/job/$JOB/$N/consoleText" | grep -vE "^\[|^Running|^Building"'
 }
 
 echo "== Before the failure: Jenkins run against the current active node"

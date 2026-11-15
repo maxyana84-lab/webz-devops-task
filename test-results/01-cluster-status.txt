@@ -1,0 +1,106 @@
+$ docker compose ps
+NAME       IMAGE                     STATUS
+webz-001   webz/cluster-node:18.04   Up 2 minutes
+webz-002   webz/cluster-node:18.04   Up 2 minutes
+webz-003   webz/cluster-node:18.04   Up 2 minutes
+webz-004   webz/jenkins:18.04        Up 2 minutes
+
+$ docker exec webz-001 pcs status
+Cluster name: webz_cluster
+Stack: corosync
+Current DC: webz-002 (version 1.1.18-2b07d5c5a9) - partition with quorum
+Last updated: Sun Nov 15 18:36:30 2026
+Last change: Sun Nov 15 18:34:47 2026 by root via cibadmin on webz-001
+
+3 nodes configured
+2 resources configured
+
+Online: [ webz-001 webz-002 webz-003 ]
+
+Full list of resources:
+
+ Resource Group: WebGroup
+     FloatingIP	(ocf::heartbeat:IPaddr2):	Started webz-001
+     WebServer	(ocf::heartbeat:apache):	Started webz-001
+
+Daemon Status:
+
+$ docker exec webz-001 pcs constraint
+Location Constraints:
+  Resource: WebGroup
+    Enabled on: webz-001 (score:100)
+    Enabled on: webz-002 (score:50)
+    Enabled on: webz-003 (score:25)
+Ordering Constraints:
+Colocation Constraints:
+Ticket Constraints:
+
+$ docker exec webz-001 crm_simulate -sL | grep allocation
+group_color: WebGroup allocation score on webz-001: 100
+group_color: WebGroup allocation score on webz-002: 50
+group_color: WebGroup allocation score on webz-003: 25
+group_color: FloatingIP allocation score on webz-001: 100
+group_color: FloatingIP allocation score on webz-002: 50
+group_color: FloatingIP allocation score on webz-003: 25
+group_color: WebServer allocation score on webz-001: 0
+group_color: WebServer allocation score on webz-002: 0
+group_color: WebServer allocation score on webz-003: 0
+native_color: FloatingIP allocation score on webz-001: 100
+native_color: FloatingIP allocation score on webz-002: 50
+native_color: FloatingIP allocation score on webz-003: 25
+native_color: WebServer allocation score on webz-001: 0
+native_color: WebServer allocation score on webz-002: -INFINITY
+native_color: WebServer allocation score on webz-003: -INFINITY
+
+$ docker exec webz-001 corosync-quorumtool -s
+Quorum information
+------------------
+Date:             Sun Nov 15 18:36:53 2026
+Quorum provider:  corosync_votequorum
+Nodes:            3
+Node ID:          1
+Ring ID:          1/16
+Quorate:          Yes
+
+Votequorum information
+----------------------
+Expected votes:   3
+Highest expected: 3
+Total votes:      3
+Quorum:           2  
+Flags:            Quorate WaitForAll LastManStanding AutoTieBreaker 
+
+Membership information
+----------------------
+    Nodeid      Votes Name
+         1          1 webz-001 (local)
+         2          1 webz-002
+         3          1 webz-003
+
+$ docker exec webz-001 ip -4 addr show eth0
+2: eth0@if56: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default  link-netnsid 0
+    inet 172.28.0.11/24 brd 172.28.0.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet 172.28.0.100/24 brd 172.28.0.255 scope global secondary eth0
+       valid_lft forever preferred_lft forever
+
+$ docker exec webz-004 curl -i http://172.28.0.100/
+HTTP/1.1 200 OK
+Date: Sun, 15 Nov 2026 18:36:58 GMT
+Server: Apache/2.4.29 (Ubuntu)
+X-Served-By: webz-001
+Last-Modified: Sun, 15 Nov 2026 17:04:19 GMT
+ETag: "97-66053a6e76ac0"
+Accept-Ranges: bytes
+Content-Length: 151
+Vary: Accept-Encoding
+Content-Type: text/html
+
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>webz cluster</title></head>
+<body><h1>Junior DevOps Engineer - Home Task</h1></body>
+</html>
+
+$ docker exec webz-004 service jenkins status
+jenkins is running (pid 19)

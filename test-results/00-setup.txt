@@ -1,0 +1,107 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+>> waiting for all 3 nodes to be online with quorum
+Stack: corosync
+Current DC: webz-002 (version 1.1.18-2b07d5c5a9) - partition with quorum
+Last updated: Sun Nov 15 18:34:12 2026
+Last change: Sun Nov 15 18:34:08 2026 by hacluster via crmd on webz-002
+
+3 nodes configured
+0 resources configured
+
+Online: [ webz-001 webz-002 webz-003 ]
+
+No active resources
+
+>> cluster properties
+Warning: Defaults do not apply to resources which override them with their own defined values
+>> creating resources (group = colocation + start order: IP first, then Apache)
+>> failover order: webz-001 (active) -> webz-002 -> webz-003
+>> done
+Cluster name: webz_cluster
+Stack: corosync
+Current DC: webz-002 (version 1.1.18-2b07d5c5a9) - partition with quorum
+Last updated: Sun Nov 15 18:35:05 2026
+Last change: Sun Nov 15 18:34:47 2026 by root via cibadmin on webz-001
+
+3 nodes configured
+2 resources configured
+
+Online: [ webz-001 webz-002 webz-003 ]
+
+Full list of resources:
+
+ Resource Group: WebGroup
+     FloatingIP	(ocf::heartbeat:IPaddr2):	Started webz-001
+     WebServer	(ocf::heartbeat:apache):	Started webz-001
+
+Daemon Status:
+Location Constraints:
+  Resource: WebGroup
+    Enabled on: webz-001 (score:100)
+    Enabled on: webz-002 (score:50)
+    Enabled on: webz-003 (score:25)
+Ordering Constraints:
+Colocation Constraints:
+Ticket Constraints:
+
+Jenkins:  http://localhost:8090  (user: admin)
+Log file: /home/max/webz-devops-task/logs/curl.log
+Quick check from webz-004:
+HTTP/1.1 200 OK
+X-Served-By: webz-001
+<body><h1>Junior DevOps Engineer - Home Task</h1></body>
