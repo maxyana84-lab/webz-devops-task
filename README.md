@@ -2,9 +2,21 @@
 
 [![CI](https://github.com/maxyana84-lab/webz-devops-task/actions/workflows/ci.yml/badge.svg)](https://github.com/maxyana84-lab/webz-devops-task/actions/workflows/ci.yml)
 
-Every push is checked by GitHub Actions: shellcheck + hadolint, then the whole
-stack is built on the runner and the cascade failover test
-(001 → 002 → 003, Jenkins log check, failback) runs end-to-end.
+Every push runs all task tests on GitHub Actions
+([Actions tab](https://github.com/maxyana84-lab/webz-devops-task/actions)):
+
+| Job | What it proves |
+|---|---|
+| Lint | shellcheck, hadolint, `docker compose config`, actionlint |
+| Failover: graceful shutdown (docker stop) | Tests 1-5 + failback |
+| Failover: hard failure (docker kill) | Tests 1-5 + failback |
+| Failover: cascade 001 -> 002 -> 003 | Tests 1-5, then the 2nd failure to the last node + failback |
+| Jenkins: job runs every 5 minutes by itself | schedule `H/5 * * * *`, a "Started by timer" build, log on the host |
+
+Inside every failover job each step is one test of the task
+(`Test 1 - find the active node and shut it down`, `Test 2 - floating IP moved…`,
+`Test 3 - transition was automatic`, `Test 4 - Jenkins job…`, `Test 5 - new log records…`);
+the job summary shows a results table and the final `curl.log`.
 Raw outputs of the local test runs are in [`test-results/`](test-results/).
 
 Four Ubuntu 18.04 containers:
@@ -54,8 +66,10 @@ scripts/
   status.sh                 which node is active
   failover-test.sh          tests 1-5
   run-all-tests.sh          all scenarios from scratch -> test-results/
+  jenkins-build.sh          trigger the Jenkins job via REST, wait, check SUCCESS
+  lib.sh                    helpers (active node, X-Served-By, wait for failover)
 test-results/               saved outputs of run-all-tests.sh
-.github/workflows/ci.yml    lint + end-to-end failover test on every push
+.github/workflows/ci.yml    lint + every task test as a separate CI job/step
 logs/curl.log               Jenkins job output, visible on the host
 ```
 

@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+defaults:
+  run:
+    shell: bash   # = bash --noprofile --norc -eo pipefail
+
 jobs:
   # ---------------------------------------------------------------------------
   lint:
@@ -71,6 +75,15 @@ jobs:
             sleep 5
           done
           docker logs webz-004 | tail -50; exit 1
+
+      - name: Setup - wait for the floating IP to answer
+        run: |
+          source scripts/lib.sh
+          for _ in $(seq 1 60); do
+            [ "$(served_by)" = "webz-001" ] && { echo "VIP answers from webz-001"; exit 0; }
+            sleep 2
+          done
+          docker exec webz-001 pcs status; exit 1
 
       - name: Check - cluster, constraints, quorum, homepage on the floating IP
         run: |
@@ -237,29 +250,39 @@ jobs:
             http://localhost:8080/job/webz-floating-ip-check/config.xml' | tee /tmp/config.xml
           grep -q "<spec>H/5 \* \* \* \*</spec>" /tmp/config.xml
 
-      - name: Check - a build "Started by timer" appears (max 7 min)
+      - name: Check - a timer-triggered run gets the answer from webz-001 (max 11 min)
         run: |
-          for _ in $(seq 1 84); do
-            CAUSES=$(docker exec webz-004 bash -c 'curl -s -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
-              "http://localhost:8080/job/webz-floating-ip-check/api/json?tree=builds\[number,result,actions\[causes\[shortDescription\]\]\]"')
-            if echo "$CAUSES" | grep -q "Started by timer"; then
-              echo "$CAUSES"
-              {
-                echo "## Jenkins timer"
-                echo "| Check | Result |"
-                echo "|---|---|"
-                echo "| Job scheduled H/5 * * * * and a timer-triggered build ran | ✅ |"
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
+          # Nothing triggers the job manually in this job, so every line in
+          # logs/curl.log was written by a build "Started by timer".
+          # (The very first timer run may fire before the VIP exists - that is
+          # recorded as a failed line, and the next run 5 min later must succeed.)
+          for _ in $(seq 1 132); do
+            grep -q "node=webz-001 | http=200" logs/curl.log 2>/dev/null && break
             sleep 5
           done
-          exit 1
-
-      - name: Check - log file on the host was appended, not overwritten
-        run: |
-          sleep 15
+          echo "== logs/curl.log on the host"
           cat logs/curl.log
           grep -q "node=webz-001 | http=200" logs/curl.log
-          ls -l logs/curl.log
-          echo "| logs/curl.log written on the host by the timer run | ✅ |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check - all builds were started by the timer, records appended
+        run: |
+          docker exec webz-004 bash -c 'curl -s -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+            "http://localhost:8080/job/webz-floating-ip-check/api/json?tree=builds\[number,result,actions\[causes\[shortDescription\]\]\]"' \
+            | tee /tmp/builds.json
+          echo
+          grep -q "Started by timer" /tmp/builds.json
+          if grep -q "Started by user" /tmp/builds.json; then echo "unexpected manual build"; exit 1; fi
+          RUNS=$(grep -o '"number":[0-9]*' /tmp/builds.json | wc -l)
+          LINES=$(wc -l < logs/curl.log)
+          echo "builds=$RUNS log lines=$LINES"
+          test "$LINES" -ge "$RUNS"   # one line per run, nothing overwritten
+          {
+            echo "## Jenkins timer"
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Job scheduled H/5 * * * * | ✅ |"
+            echo "| $RUNS build(s) Started by timer, $LINES record(s) appended to logs/curl.log on the host | ✅ |"
+            echo '```'
+            cat logs/curl.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
